@@ -1,0 +1,60 @@
+{
+    "bind_addr": "{{GetInterfaceIP \"eth0\"}}",
+    "client_addr": "{{GetInterfaceIP \"eth0\"}}",
+    "addresses": {
+        "http": "",
+        "grpc": ""
+    },
+    "data_dir": "/opt/consul",
+    "datacenter": "dc1",
+    "retry_join": [
+        ""
+    ],
+    "encrypt": "",
+    "encrypt_verify_incoming": true,
+    "encrypt_verify_outgoing": true,
+    "verify_incoming": false,
+    "verify_outgoing": true,
+    "ca_file": "",
+    "auto_encrypt": {
+        "tls": true
+    },
+    "ports": {
+        "grpc": 8502,
+        "http": 8500,
+        "sidecar_max_port": 21005,
+        "sidecar_min_port": 21000
+    },
+    "enable_central_service_config": true,
+    "acl": {
+        "enabled": true,
+        "default_policy": "deny",
+        "enable_token_persistence": true,
+        "tokens": {
+            "default": ""
+        }
+    },
+    "service": {
+        "check": [
+            {
+                "http": "",
+                "id": "",
+                "interval": "5s",
+                "method": "GET",
+                "timeout": "3s"
+            }
+        ],
+        "connect": [
+            {
+                "sidecar_service": [
+                    {
+                        "proxy": []
+                    }
+                ]
+            }
+        ],
+        "id": "",
+        "name": "",
+        "port": 8080
+    }
+}
