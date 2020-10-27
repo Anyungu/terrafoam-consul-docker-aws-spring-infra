@@ -3,7 +3,7 @@
 # Set variables rebuild
 CURRENT_SERVER_ADDRESS=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
 
-check_environment_variables() {
+check_environment_variables_for_stability() {
     if [ -z "$CONSUL_HTTP_TOKEN" ]; then
         echo "Go and set your CONSUL_HTTP_TOKEN."
         exit 1
@@ -14,42 +14,85 @@ check_environment_variables() {
         exit 1
     fi
 
-    echo "SETTING CONSUL_HTTP_ADDR and CONSUL_GRPC_ADDR will default to EC2 Host IP."
+    if [ -z "$CONSUL_CA_PEM" ]; then
+        echo "set CONSUL_CA_PEM to base64 encoded contents of server ca.pem file."
+        exit 1
+    fi
+
+    if [ -z "$CONSUL_DATACENTER" ]; then
+        echo "CONSUL_DATACENTER will default to dc1."
+        CONSUL_DATACENTER="dc1"
+    fi
+
+    if [ -z "$CONSUL_SERVER_ADDRESS" ]; then
+        echo "set a remote server address"
+        CONSUL_DATACENTER="dc1"
+    fi
+
+    if [ -z "$SERVICE_NAME" ]; then
+        echo "set SERVICE_NAME to service name."
+        exit 1
+    fi
+
+    if [ -z "$SERVICE_PORT" ]; then
+        echo "set SERVICE_PORT to service port."
+        exit 1
+    fi
+
+    if [ -z "$SERVICE_HEALTH_CHECK_PATH" ]; then
+        echo "SERVICE_HEALTH_CHECK_PATH will default to /."
+        SERVICE_HEALTH_CHECK_PATH=/
+    fi
+
+    if [ -z "$SERVICE_HEALTH_CHECK_INTERVAL" ]; then
+        echo "SERVICE_HEALTH_CHECK_INTERVAL will default to 1s."
+        SERVICE_HEALTH_CHECK_INTERVAL="5s"
+    fi
+
+    echo "SETTING CONSUL_HTTP_ADDR and CONSUL_GRPC_ADDR which will default to EC2 Host IP."
     export CONSUL_HTTP_SSL=true
-    export CONSUL_HTTP_ADDR=https://$CURRENT_SERVER_ADDRESS:8501
-    export CONSUL_GRPC_ADDR=$CURRENT_SERVER_ADDRESS:8502
+    export CONSUL_HTTP_ADDR="https://${CURRENT_SERVER_ADDRESS}:8501"
+    export CONSUL_GRPC_ADDR="${CURRENT_SERVER_ADDRESS}:8502"
 
 }
 
-# Set variables rebuild
-OUR_SERVER_ADDRESS=$(ip addr show eth0 | grep -o "inet [0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" | grep -o "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*")
+set_consul_client_agent_full_configuration() {
 
-# Collect sample json file reboot
-# retry users
-SAMPLE_FILE=$(cat ./opt/consul/configs/consul.json)
+    echo "Decoding base64 ca.pem to /consul/ca.pem."
+    echo $CONSUL_CA_PEM | base64 -d >/opt/consul/configs/consul-agent-ca.pem
 
-# Read in template one line at the time, and replace variables (more natural (and efficient) way, thanks to Jonathan Leffler).
-JSON_STRING=$(jq -n --arg snadress "$OUR_SERVER_ADDRESS" "$SAMPLE_FILE")
+    CLIENT_CONFIG_FILE="/opt/consul/configs/client.json"
 
-echo $JSON_STRING >>/etc/consul.d/consul.json
+    SERVICE_CHECK_ADDRESS="http://${CURRENT_SERVER_ADDRESS}:${SERVICE_PORT}${SERVICE_HEALTH_CHECK_PATH}",
 
-# Initialize the consul agent
-# envoy -c /etc/envoy/envoy.yaml
-consul agent -config-file /etc/consul.d/consul.json
+    jq '.addresses.http="'$CURRENT_SERVER_ADDRESS'" |
+        .addresses.grpc="'$CURRENT_SERVER_ADDRESS'" |
+        .datacenter = "'${CONSUL_DATACENTER}'" | 
+        .retry_join = ["'${CONSUL_SERVER_ADDRESS}'"] |
+        .encrypt = "'${CONSUL_GOSSIP_ENCRYPT}'" | 
+        .acl.tokens.default = "'${CONSUL_HTTP_TOKEN}'" | 
+        .service.check[].http = "'${SERVICE_CHECK_ADDRESS}'" |
+        .service.check[].id = "'${SERVICE_NAME}-check'" |
+        .service.check[].interval = "'${SERVICE_HEALTH_CHECK_INTERVAL}'" |
+        .service.check[].timeout = "3s" |
+        .service.id = "'${SERVICE_NAME}-1'" |
+        .service.name = "'${SERVICE_NAME}'" |
+        .service.port = "'${SERVICE_PORT}'"' ./opt/consul/configs/agent_config.json >${CLIENT_CONFIG_FILE}
 
-#!/bin/sh
-# SERVICE="activities"
+    trap "consul leave" SIGINT SIGTERM EXIT
 
-OUR_SERVER_ADDRESS=$(ip addr show eth0 | grep -o "inet [0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" | grep -o "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*")
+    consul agent -config-file /opt/consul/configs/client.json &
 
-# Collect sample json file remove auto
-# SAMPLE_FILE=$(cat ./opt/consul/configs/config.mapper.json)
+    # consul config write /opt/consul/configs/protocol.hcl &
 
-# Read in template one line at the time, and replace variables (more natural (and efficient) way, thanks to Jonathan Leffler).
-# JSON_STRING=$(jq -n --arg service "$SERVICE" "$SAMPLE_FILE")
+    consul connect envoy -sidecar-for ${SERVICE_NAME}-1 &
 
-# echo $JSON_STRING >> /opt/consul/configs/service_"$SERVICE"_consul.json
+    # Block using tail so the trap will fire
+    tail -f /dev/null &
+    PID=$!
+    wait $PID
+}
 
-consul config write -http-addr="$OUR_SERVER_ADDRESS:8500" /opt/consul/configs/protocol.hcl
+check_environment_variables_for_stability
 
-consul connect envoy -http-addr="$OUR_SERVER_ADDRESS:8500" -grpc-addr="$OUR_SERVER_ADDRESS:8502" -token=4ef9ecc4-2c06-0dae-4183-b0282dcdb361 -sidecar-for notifications-1
+set_consul_client_agent_full_configuration

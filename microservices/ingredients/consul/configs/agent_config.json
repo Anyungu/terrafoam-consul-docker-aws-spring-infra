@@ -15,7 +15,7 @@
     "encrypt_verify_outgoing": true,
     "verify_incoming": false,
     "verify_outgoing": true,
-    "ca_file": "",
+    "ca_file": "/opt/consul/configs/consul-agent-ca.pem",
     "auto_encrypt": {
         "tls": true
     },
